@@ -1,30 +1,36 @@
-mod db;
-
-pub use db::*;
 use time::OffsetDateTime;
 
-use std::{
-    collections::HashMap,
-    fmt::Write,
-    sync::{atomic::AtomicU64, Arc, Mutex},
-};
-
-use rusqlite::Connection;
+use std::{collections::HashMap, fmt::Write, sync::atomic::AtomicU64};
+use tokio::sync::broadcast::Sender;
+use tracing::Level;
 use tracing::{field::Visit, level_filters::LevelFilter, span};
 #[cfg(feature = "tracing-log")]
 use tracing_log::NormalizeEvent;
 
+#[derive(Debug, Clone)]
+pub struct LogEntry<S = String> {
+    pub time: OffsetDateTime,
+    pub level: Level,
+    pub module: Option<S>,
+    pub file: Option<S>,
+    pub line: Option<u32>,
+    pub message: String,
+    pub structured: HashMap<S, String>,
+}
+
+pub type LogMsg = LogEntry<&'static str>;
+
 /// A `Layer` to write events to a sqlite database.
 /// This type can be composed with other `Subscriber`s and `Layer`s.
 #[derive(Debug)]
-pub struct Layer<C> {
-    logger: C,
+pub struct Layer {
+    tx: Sender<LogMsg>,
     max_level: LevelFilter,
     black_list: Option<Box<[&'static str]>>,
     white_list: Option<Box<[&'static str]>>,
 }
 
-impl<C> Layer<C> {
+impl Layer {
     pub fn black_list(&self) -> Option<&[&'static str]> {
         self.black_list.as_deref()
     }
@@ -47,29 +53,29 @@ impl<C> Layer<C> {
             })
     }
 
-    fn max_level_hint(&self) -> Option<tracing::level_filters::LevelFilter> {
+    fn max_level_hint(&self) -> Option<LevelFilter> {
         Some(self.max_level)
     }
 
-    pub fn to_subscriber(self) -> Subscriber<C> {
+    pub fn to_subscriber(self) -> Subscriber {
         Subscriber::with_layer(self)
     }
 }
 
-impl<C: Connect> Layer<C> {
+impl Layer {
     fn on_event(&self, event: &tracing::Event<'_>) {
-        #[cfg(feature = "tracing-log")]
-        let normalized_meta = event.normalized_metadata();
-        #[cfg(feature = "tracing-log")]
-        let meta = match normalized_meta.as_ref() {
-            Some(meta) if self.enabled(meta) => meta,
-            None => event.metadata(),
-            _ => return,
-        };
-
-        #[cfg(not(feature = "tracing-log"))]
-        let meta = event.metadata();
-
+         cfg_if::cfg_if! {
+         if #[cfg(feature = "tracing-log")] {
+                let normalized_meta = event.normalized_metadata();
+                let meta = match normalized_meta.as_ref() {
+                    Some(meta) if self.enabled(meta) => meta,
+                    None => event.metadata(),
+                    _ => return,
+                };
+            } else {
+                let meta = event.metadata();
+            }
+        }
         let level = *meta.level();
         let module = meta.module_path();
         let file = meta.file();
@@ -83,20 +89,22 @@ impl<C: Connect> Layer<C> {
             kvs: &mut structured,
         });
 
-        self.logger.log(LogEntry {
-            time: OffsetDateTime::now_utc(),
-            level,
-            module,
-            file,
-            line,
-            message,
-            structured,
-        });
+        self.tx
+            .send(LogEntry {
+                time: OffsetDateTime::now_utc(),
+                level,
+                module,
+                file,
+                line,
+                message,
+                structured,
+            })
+            .unwrap();
     }
 }
 
 #[cfg(feature = "layer")]
-impl<S: tracing::Subscriber, C: Connect + 'static> tracing_subscriber::Layer<S> for Layer<C> {
+impl<S: tracing::Subscriber> tracing_subscriber::Layer<S> for Layer {
     fn enabled(
         &self,
         metadata: &tracing::Metadata<'_>,
@@ -112,26 +120,26 @@ impl<S: tracing::Subscriber, C: Connect + 'static> tracing_subscriber::Layer<S> 
 
 /// A simple `Subscriber` that wraps `Layer`[crate::Layer].
 #[derive(Debug)]
-pub struct Subscriber<C> {
+pub struct Subscriber {
     id: AtomicU64,
-    layer: Layer<C>,
+    layer: Layer,
 }
 
-impl<C> Subscriber<C> {
-    pub fn new(connection: C) -> Self {
-        Self::with_max_level(connection, LevelFilter::TRACE)
+impl Subscriber {
+    pub fn new(tx: Sender<LogMsg>) -> Self {
+        Self::with_max_level(tx, LevelFilter::TRACE)
     }
 
-    fn with_layer(layer: Layer<C>) -> Self {
+    fn with_layer(layer: Layer) -> Self {
         Self {
             id: AtomicU64::new(1),
             layer,
         }
     }
 
-    pub fn with_max_level(connection: C, max_level: LevelFilter) -> Self {
+    pub fn with_max_level(tx: Sender<LogMsg>, max_level: LevelFilter) -> Self {
         Self::with_layer(Layer {
-            logger: connection,
+            tx,
             max_level,
             black_list: None,
             white_list: None,
@@ -147,7 +155,7 @@ impl<C> Subscriber<C> {
     }
 }
 
-impl<C: Connect + 'static> tracing::Subscriber for Subscriber<C> {
+impl tracing::Subscriber for Subscriber {
     fn enabled(&self, metadata: &tracing::Metadata<'_>) -> bool {
         self.layer.enabled(metadata)
     }
@@ -224,33 +232,17 @@ impl SubscriberBuilder {
         }
     }
 
-    pub fn build<C>(self, conn: C) -> Subscriber<C> {
-        self.build_layer(conn).to_subscriber()
+    pub fn build(self, tx: Sender<LogMsg>) -> Subscriber {
+        self.build_layer(tx).to_subscriber()
     }
 
-    pub fn build_prepared(
-        self,
-        conn: Arc<Mutex<Connection>>,
-    ) -> Result<Subscriber<Arc<Mutex<Connection>>>, rusqlite::Error> {
-        self.build_layer_prepared(conn).map(|l| l.to_subscriber())
-    }
-
-    pub fn build_layer<C>(self, conn: C) -> Layer<C> {
+    pub fn build_layer(self, tx: Sender<LogEntry<&'static str>>) -> Layer {
         Layer {
-            logger: conn,
+            tx,
             max_level: self.max_level,
             black_list: self.black_list,
             white_list: self.white_list,
         }
-    }
-
-    pub fn build_layer_prepared(
-        self,
-        conn: Arc<Mutex<Connection>>,
-    ) -> Result<Layer<Arc<Mutex<Connection>>>, rusqlite::Error> {
-        prepare_database(&*conn.lock().unwrap())?;
-
-        Ok(self.build_layer(conn))
     }
 }
 

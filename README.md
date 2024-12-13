@@ -1,33 +1,41 @@
 # tracing-subscribe-sqlite
 
-A tracing Subscriber to send log to sqlite database (WIP).
+A tracing Subscriber to send log to tokio broadcast channel (WIP).
 
 ## Usage
 
 ```toml
 [dependencies]
-tracing-subscriber-sqlite = "0.1"
+tracing-subscriber-channel = "0.1"
 ```
 
 ```rust
-use rusqlite::Connection;
-use tracing_subscriber_sqlite::prepare_database;
+use tokio::sync::broadcast::channel;
+use tracing_subscriber_channel::SubscriberBuilder;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::open("log.db")?;
-
+#[tokio::main]
+async fn main() {
+    let (tx, mut rx) = channel(10);
     tracing::subscriber::set_global_default(
-        tracing_subscriber_sqlite::SubscriberBuilder::new() // builder pattern
-            .with_black_list(["h2::client", "h2::codec"]) // filter logs from `h2::client` and `h2::codec`
-            .with_white_list(["h2"]) // only enable logs from `h2`
-            .build_prepared(Arc::new(Mutex::new(conn)))?, // prepare database and build the subscriber
-    )?;
-
-    tracing::info!(x = 1, "test"); // structured data is stored as JSON
-
-    tracing::debug!("debug");
-
-    Ok(())
+        SubscriberBuilder::new()
+            .with_black_list(["h2::client", "h2::codec"])
+            .build(tx),
+    )
+        .unwrap();
+    tracing::info!(x = 100, "test info");
+    tracing::debug!(x = 100, "test trace");
+    while let Ok(entry) = rx.recv().await {
+        println!(
+            "{} [{}] [{:?}/{:?}:{:?}] {}, data: {}",
+            entry.time,
+            entry.level.as_str(),
+            entry.module.unwrap(),
+            entry.file.unwrap(),
+            entry.line.unwrap(),
+            entry.message,
+            serde_json::to_string(&entry.structured).unwrap()
+        );
+    }
 }
 ```
 
@@ -37,23 +45,30 @@ Use `tracing-log` to send `log`'s records to `tracing` ecosystem.
 
 ```toml
 [dependencies]
-tracing-subscriber-sqlite = { version = "0.1", features = ["tracing-log"]}
+tracing-subscriber-channel = { version = "0.1", features = ["tracing-log"]}
 ```
 
 ```rust
-use rusqlite::Connection;
-use tracing_subscriber_sqlite::prepare_database;
+use std::sync::mpsc::channel;
+use tokio::sync::broadcast::channel;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let conn = Connection::open("log.db")?;
-
-    prepare_database(&conn)?;
-
+    let (tx, mut rx) = channel(1);
     tracing_log::LogTracer::init().unwrap(); // handle `log`'s records
-    tracing::subscriber::set_global_default(tracing_subscriber_sqlite::Subscriber::new(conn))?;
-
+    tracing::subscriber::set_global_default(tracing_subscriber_channel::Subscriber::new(tx))?;
     log::warn!("log warning");
-
+    if let Ok(entry) = rx.recv().await {
+        println!(
+            "{} [{}] [{:?}/{:?}:{:?}] {}, data: {}",
+            entry.time,
+            entry.level.as_str(),
+            entry.module.unwrap(),
+            entry.file.unwrap(),
+            entry.line.unwrap(),
+            entry.message,
+            serde_json::to_string(&entry.structured).unwrap()
+        );
+    }
     Ok(())
 }
 ```

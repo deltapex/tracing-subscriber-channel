@@ -1,21 +1,27 @@
 [package]
-name = "tracing-subscriber-sqlite"
+name = "tracing-subscriber-channel"
 version = "0.1.0"
 edition = "2021"
-homepage = "https://github.com/ProjectAnni/tracing-subscriber-sqlite"
-repository = "https://github.com/ProjectAnni/tracing-subscriber-sqlite"
+homepage = "https://github.com/deltapex/tracing-subscriber-channel"
+repository = "https://github.com/deltapex/tracing-subscriber-channel"
 license = "MIT"
-authors = ["snylonue <snylonue@gmail.com>"]
-description = "A tracing Subscriber to send log to sqlite database."
+authors = ["DogLi <cxwcylf@outlook.com>"]
+description = "A tracing Subscriber to send log to tokio broadcast channel."
 
 [dependencies]
-rusqlite = { version = "0.30", features = ["bundled", "time"] }
-serde_json = "1.0.122"
+cfg-if = "1.0"
 time = "0.3.36"
-tracing = "0.1.40"
-tracing-log = { version = "0.2.0", optional = true, default-features = false }
-tracing-subscriber = { version = "0.3.18", optional = true, default-features = false }
+tokio = {  version = "1", features = ["sync"] }
+tracing = "0.1"
+tracing-log = { version = "0.2", optional = true, default-features = false }
+tracing-subscriber = { version = "0.3", optional = true, default-features = false }
+
+[dev-dependencies]
+log = "0.4"
+serde_json = "1.0"
+tokio = { version = "1", features = ["full"]}
 
 [features]
 tracing-log = ["dep:tracing-log"]
 layer = ["dep:tracing-subscriber"]
+
