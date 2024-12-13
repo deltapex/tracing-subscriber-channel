@@ -9,7 +9,6 @@ authors = ["DogLi <cxwcylf@outlook.com>"]
 description = "A tracing Subscriber to send log to tokio broadcast channel."
 
 [dependencies]
-cfg-if = "1.0"
 time = "0.3.36"
 tokio = {  version = "1", features = ["sync"] }
 tracing = "0.1"
@@ -17,7 +16,6 @@ tracing-log = { version = "0.2", optional = true, default-features = false }
 tracing-subscriber = { version = "0.3", optional = true, default-features = false }
 
 [dev-dependencies]
-log = "0.4"
 serde_json = "1.0"
 tokio = { version = "1", features = ["full"]}
 

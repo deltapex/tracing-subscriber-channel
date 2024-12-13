@@ -1,11 +1,8 @@
-use time::OffsetDateTime;
-
 use std::{collections::HashMap, fmt::Write, sync::atomic::AtomicU64};
+use time::OffsetDateTime;
 use tokio::sync::broadcast::Sender;
 use tracing::Level;
 use tracing::{field::Visit, level_filters::LevelFilter, span};
-#[cfg(feature = "tracing-log")]
-use tracing_log::NormalizeEvent;
 
 #[derive(Debug, Clone)]
 pub struct LogEntry<S = String> {
@@ -64,18 +61,7 @@ impl Layer {
 
 impl Layer {
     fn on_event(&self, event: &tracing::Event<'_>) {
-         cfg_if::cfg_if! {
-         if #[cfg(feature = "tracing-log")] {
-                let normalized_meta = event.normalized_metadata();
-                let meta = match normalized_meta.as_ref() {
-                    Some(meta) if self.enabled(meta) => meta,
-                    None => event.metadata(),
-                    _ => return,
-                };
-            } else {
-                let meta = event.metadata();
-            }
-        }
+        let meta = event.metadata();
         let level = *meta.level();
         let module = meta.module_path();
         let file = meta.file();
@@ -88,18 +74,16 @@ impl Layer {
             message: &mut message,
             kvs: &mut structured,
         });
-
-        self.tx
-            .send(LogEntry {
-                time: OffsetDateTime::now_utc(),
-                level,
-                module,
-                file,
-                line,
-                message,
-                structured,
-            })
-            .unwrap();
+        let entry = LogEntry {
+            time: OffsetDateTime::now_utc(),
+            level,
+            module,
+            file,
+            line,
+            message,
+            structured,
+        };
+        self.tx.send(entry).unwrap();
     }
 }
 
@@ -236,7 +220,7 @@ impl SubscriberBuilder {
         self.build_layer(tx).to_subscriber()
     }
 
-    pub fn build_layer(self, tx: Sender<LogEntry<&'static str>>) -> Layer {
+    pub fn build_layer(self, tx: Sender<LogMsg>) -> Layer {
         Layer {
             tx,
             max_level: self.max_level,
