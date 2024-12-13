@@ -25,6 +25,9 @@ async fn main() {
         .unwrap();
     tracing::info!(x = 100, "test info");
     tracing::debug!(x = 100, "test trace");
+    tokio::spawn(async move {
+        tracing::info!("in thread");
+    });
     while let Ok(entry) = rx.recv().await {
         println!(
             "{} [{}] [{:?}/{:?}:{:?}] {}, data: {}",

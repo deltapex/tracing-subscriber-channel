@@ -22,4 +22,5 @@ tokio = { version = "1", features = ["full"]}
 [features]
 tracing-log = ["dep:tracing-log"]
 layer = ["dep:tracing-subscriber"]
+local-time = ["time/local-offset"]
 

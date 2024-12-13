@@ -74,8 +74,12 @@ impl Layer {
             message: &mut message,
             kvs: &mut structured,
         });
+        #[cfg(feature = "local-time")]
+        let time = time::OffsetDateTime::now_local().unwrap();
+        #[cfg(not(feature = "local-time"))]
+        let time = time::OffsetDateTime::now_utc();
         let entry = LogEntry {
-            time: OffsetDateTime::now_utc(),
+            time,
             level,
             module,
             file,
